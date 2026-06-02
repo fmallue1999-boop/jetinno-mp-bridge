@@ -1,0 +1,1 @@
+Jetinno MercadoPago QR bridge
