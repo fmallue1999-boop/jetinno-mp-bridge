@@ -104,7 +104,6 @@ async function createPos(storeId) {
     name: `Caja Jetinno ${STORE_TAG}`,
     fixed_amount: false,
     store_id: storeId,
-    external_store_id: STORE_EXTERNAL_ID,
     external_id: POS_EXTERNAL_ID,
     category: 621102,
   };
