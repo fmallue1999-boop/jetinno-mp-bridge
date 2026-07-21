@@ -55,8 +55,9 @@ const MP_BASE = 'https://api.mercadopago.com';
 const mpMock = () => !process.env.MP_ACCESS_TOKEN;
 const MP_USER_ID = process.env.MP_USER_ID || '';
 const STORE_TAG = process.env.MP_STORE_TAG || '173840';
-const STORE_EXTERNAL_ID = `JETINNO_STORE_${STORE_TAG}`;
-const POS_EXTERNAL_ID = process.env.MP_EXTERNAL_POS_ID || `JETINNO_POS_${STORE_TAG}`;
+// MercadoPago exige external_id alfanumérico (sin guiones ni guiones bajos).
+const STORE_EXTERNAL_ID = `JETINNOSTORE${STORE_TAG}`;
+const POS_EXTERNAL_ID = process.env.MP_EXTERNAL_POS_ID || `JETINNOPOS${STORE_TAG}`;
 let cachedPos = null; // external_id de la caja, una vez asegurada
 
 async function mpFetch(path, { method = 'GET', body } = {}) {
