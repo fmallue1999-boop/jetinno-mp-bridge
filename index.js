@@ -131,22 +131,24 @@ async function ensurePos() {
 async function createQrOrder(p) {
   if (mpMock()) return { qrData: `00020101021143MOCKQR-${p.orderNo}`.slice(0, 300), mpOrderId: `mock-${p.orderNo}` };
   const posExt = await ensurePos();
-  const path = `/instore/orders/qr/seller/collectors/${MP_USER_ID}/pos/${encodeURIComponent(posExt)}/orders`;
+  // QR dinámico ("QR trama"): POST .../qrs devuelve qr_data (string del QR).
+  const path = `/instore/orders/qr/seller/collectors/${MP_USER_ID}/pos/${encodeURIComponent(posExt)}/qrs`;
+  const amount = Number(p.amount);
   const body = {
     external_reference: p.orderNo,
     title: p.title || `Orden ${p.orderNo}`,
     description: p.title || `Orden ${p.orderNo}`,
     notification_url: process.env.MP_NOTIFICATION_URL,
-    total_amount: Number(p.amount),
+    total_amount: amount,
     items: [{
       title: p.title || `Producto ${p.orderNo}`,
       quantity: 1,
-      unit_price: Number(p.amount),
+      unit_price: amount,
       unit_measure: 'unit',
-      total_amount: Number(p.amount),
+      total_amount: amount,
     }],
   };
-  const data = await mpFetch(path, { method: 'PUT', body });
+  const data = await mpFetch(path, { method: 'POST', body });
   return { qrData: (data.qr_data || '').toString(), mpOrderId: data.in_store_order_id || p.orderNo };
 }
 
@@ -269,6 +271,17 @@ app.get('/health', (_req, res) => res.json({ ok: true, mock: mpMock() }));
 app.get('/', (_req, res) => res.send('Jetinno <-> MercadoPago bridge OK'));
 
 // Dispara/inspecciona la creación de la caja (para depurar). Devuelve JSON legible.
+// Prueba de creación de QR real sin la máquina: /testqr?amount=1
+app.get('/testqr', async (req, res) => {
+  if (mpMock()) return res.json({ mock: true });
+  try {
+    const r = await createQrOrder({ orderNo: 'TEST' + Date.now(), amount: Number(req.query.amount || 1), title: 'Prueba' });
+    res.json({ ok: true, qrLen: (r.qrData || '').length, qrData: r.qrData, mpOrderId: r.mpOrderId });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, body: e.body });
+  }
+});
+
 app.get('/setup', async (_req, res) => {
   if (mpMock()) return res.json({ mock: true, msg: 'Sin MP_ACCESS_TOKEN: modo simulación.' });
   try {
