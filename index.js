@@ -85,10 +85,10 @@ async function createStore() {
     location: {
       street_number: '55',
       street_name: 'Alberti',
-      city_name: 'CABA',
+      city_name: 'La Plata',
       state_name: 'Buenos Aires',
-      latitude: -34.6037,
-      longitude: -58.3816,
+      latitude: -34.9205,
+      longitude: -57.9536,
     },
   };
   const r = await mpFetch(`/users/${MP_USER_ID}/stores`, { method: 'POST', body });
