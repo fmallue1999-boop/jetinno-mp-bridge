@@ -1,17 +1,20 @@
 'use strict';
 
 /**
- * Servidor puente Jetinno <-> MercadoPago QR — versión de un solo archivo (para deploy fácil).
- * Implementa el manual "Jetinno IOT Payment Universal Interface" (A5).
+ * Servidor puente Jetinno <-> MercadoPago QR (un solo archivo).
+ * - Implementa el manual Jetinno "IOT Payment Universal Interface" (A5).
+ * - Genera QR dinámico real de MercadoPago (modelo "in-store orders").
+ * - Auto-crea el local (store) y la caja (POS) en MercadoPago si no existen,
+ *   usando MP_ACCESS_TOKEN + MP_USER_ID (no hay que correr comandos a mano).
  *
- * Endpoints que Jetinno llama:
- *   POST /getQrCode   POST /payBarCode   POST /refund   POST /productdone
- * Webhook que MercadoPago llama:
- *   POST /mp/webhook
- * Salud:
- *   GET /health
+ * Env vars:
+ *   JETINNO_USERNAME, JETINNO_APIKEY          (Jetinno)
+ *   MP_ACCESS_TOKEN                           (MercadoPago, secreto)
+ *   MP_USER_ID                                (id de tu cuenta MP, ej 2980081299)
+ *   MP_STORE_TAG        (opcional, default "173840")
+ *   MP_EXTERNAL_POS_ID  (opcional, si querés fijar la caja)
  *
- * Sin credenciales reales corre en MODO MOCK (no cobra) para poder probar el circuito.
+ * Si MP_ACCESS_TOKEN está vacío -> MODO MOCK (QR de prueba, no cobra).
  */
 
 const express = require('express');
@@ -47,9 +50,14 @@ function verify(message, apikey, { extraSignedFields = [], optionalFields = [] }
   return sign(flat, apikey, message.nonce) === String(message.sign || '').toUpperCase();
 }
 
-// ----------------- MercadoPago (con modo mock) -----------------
+// ----------------- MercadoPago -----------------
 const MP_BASE = 'https://api.mercadopago.com';
 const mpMock = () => !process.env.MP_ACCESS_TOKEN;
+const MP_USER_ID = process.env.MP_USER_ID || '';
+const STORE_TAG = process.env.MP_STORE_TAG || '173840';
+const STORE_EXTERNAL_ID = `JETINNO_STORE_${STORE_TAG}`;
+const POS_EXTERNAL_ID = process.env.MP_EXTERNAL_POS_ID || `JETINNO_POS_${STORE_TAG}`;
+let cachedPos = null; // external_id de la caja, una vez asegurada
 
 async function mpFetch(path, { method = 'GET', body } = {}) {
   const res = await fetch(`${MP_BASE}${path}`, {
@@ -59,28 +67,97 @@ async function mpFetch(path, { method = 'GET', body } = {}) {
   });
   const text = await res.text();
   let json; try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-  if (!res.ok) { const e = new Error(`MercadoPago ${res.status}: ${text}`); e.body = json; throw e; }
+  if (!res.ok) { const e = new Error(`MP ${res.status} ${path}: ${text}`); e.status = res.status; e.body = json; throw e; }
   return json;
 }
+
+async function findStoreId() {
+  const r = await mpFetch(`/users/${MP_USER_ID}/stores/search`);
+  const list = r.results || [];
+  const found = list.find((s) => s.external_id === STORE_EXTERNAL_ID);
+  return found ? found.id : null;
+}
+async function createStore() {
+  const body = {
+    name: `Jetinno ${STORE_TAG}`,
+    external_id: STORE_EXTERNAL_ID,
+    location: {
+      street_number: '55',
+      street_name: 'Alberti',
+      city_name: 'CABA',
+      state_name: 'Buenos Aires',
+      latitude: -34.6037,
+      longitude: -58.3816,
+    },
+  };
+  const r = await mpFetch(`/users/${MP_USER_ID}/stores`, { method: 'POST', body });
+  return r.id;
+}
+async function findPos() {
+  const r = await mpFetch(`/pos?external_id=${encodeURIComponent(POS_EXTERNAL_ID)}`);
+  const list = r.results || [];
+  return list.find((p) => p.external_id === POS_EXTERNAL_ID) || null;
+}
+async function createPos(storeId) {
+  const body = {
+    name: `Caja Jetinno ${STORE_TAG}`,
+    fixed_amount: false,
+    store_id: storeId,
+    external_store_id: STORE_EXTERNAL_ID,
+    external_id: POS_EXTERNAL_ID,
+    category: 621102,
+  };
+  return mpFetch('/pos', { method: 'POST', body });
+}
+
+// Asegura local + caja. Devuelve el external_id de la caja.
+async function ensurePos() {
+  if (cachedPos) return cachedPos;
+  if (!MP_USER_ID) throw new Error('Falta MP_USER_ID');
+  let pos = await findPos();
+  if (!pos) {
+    let storeId = await findStoreId();
+    if (!storeId) storeId = await createStore();
+    pos = await createPos(storeId);
+    console.log(`[MP] Caja creada: ${POS_EXTERNAL_ID} (store ${storeId})`);
+  } else {
+    console.log(`[MP] Caja existente: ${POS_EXTERNAL_ID}`);
+  }
+  cachedPos = POS_EXTERNAL_ID;
+  return cachedPos;
+}
+
+// Crea la orden QR y devuelve el string qr_data.
 async function createQrOrder(p) {
-  if (mpMock()) return { qrData: `00020101021143MOCKQR-${p.orderNo}`.slice(0, 128), mpOrderId: `mock-${p.orderNo}` };
-  const userId = process.env.MP_USER_ID, posId = process.env.MP_EXTERNAL_POS_ID;
-  if (!userId || !posId) throw new Error('Faltan MP_USER_ID y/o MP_EXTERNAL_POS_ID');
-  const path = `/instore/orders/qr/seller/collectors/${userId}/pos/${posId}/orders`;
+  if (mpMock()) return { qrData: `00020101021143MOCKQR-${p.orderNo}`.slice(0, 300), mpOrderId: `mock-${p.orderNo}` };
+  const posExt = await ensurePos();
+  const path = `/instore/orders/qr/seller/collectors/${MP_USER_ID}/pos/${encodeURIComponent(posExt)}/orders`;
   const body = {
     external_reference: p.orderNo,
     title: p.title || `Orden ${p.orderNo}`,
+    description: p.title || `Orden ${p.orderNo}`,
     notification_url: process.env.MP_NOTIFICATION_URL,
     total_amount: Number(p.amount),
-    items: [{ title: p.title || `Producto ${p.orderNo}`, quantity: 1, unit_price: Number(p.amount), unit_measure: 'unit', total_amount: Number(p.amount) }],
+    items: [{
+      title: p.title || `Producto ${p.orderNo}`,
+      quantity: 1,
+      unit_price: Number(p.amount),
+      unit_measure: 'unit',
+      total_amount: Number(p.amount),
+    }],
   };
   const data = await mpFetch(path, { method: 'PUT', body });
-  return { qrData: (data.qr_data || data.in_store_order_id || '').toString().slice(0, 128), mpOrderId: data.in_store_order_id || p.orderNo };
+  return { qrData: (data.qr_data || '').toString(), mpOrderId: data.in_store_order_id || p.orderNo };
 }
+
 async function getPayment(id) {
-  if (mpMock()) return { status: 'approved', externalReference: 'mock', amount: 0 };
   const d = await mpFetch(`/v1/payments/${id}`);
-  return { status: d.status, externalReference: d.external_reference, amount: d.transaction_amount };
+  return { status: d.status, externalReference: d.external_reference };
+}
+async function getMerchantOrder(id) {
+  const d = await mpFetch(`/merchant_orders/${id}`);
+  const approved = (d.payments || []).some((p) => p.status === 'approved');
+  return { paid: d.order_status === 'paid' || approved, externalReference: d.external_reference };
 }
 async function refundPayment(id, amount) {
   if (mpMock()) return { status: 'approved' };
@@ -105,16 +182,21 @@ function checkSign(req, res, opts) {
   return true;
 }
 
-// ----------------- Endpoints -----------------
+// ----------------- Endpoints Jetinno -----------------
 app.post('/getQrCode', async (req, res) => {
+  const d = req.body.data || {};
+  console.log(`[getQrCode] pedido: device=${d.deviceNo} order=${d.orderNo} monto(cents)=${d.orderAmount} prod=${d.productId}`);
   try {
-    if (!checkSign(req, res, { optionalFields: ['payType', 'merchantNo', 'attach'] })) return;
-    const d = req.body.data || {};
+    if (!checkSign(req, res, { optionalFields: ['payType', 'merchantNo', 'attach'] })) { console.log('[getQrCode] firma/usuario rechazado'); return; }
     const amountCents = parseInt(d.orderAmount, 10);
     const { qrData, mpOrderId } = await createQrOrder({ orderNo: d.orderNo, amount: amountCents / 100, title: d.productName });
     orders.set(d.orderNo, { deviceNo: d.deviceNo, amountCents, notifyUrl: d.notifyUrl, productId: d.productId, mpOrderId, mpPaymentId: null });
+    console.log(`[getQrCode] OK -> qr len=${qrData.length}`);
     ok(res, { deviceNo: d.deviceNo, orderNo: d.orderNo, qrCode: qrData });
-  } catch (e) { console.error('[getQrCode]', e.message); fail(res, 'SYSTEM_ERROR'); }
+  } catch (e) {
+    console.error('[getQrCode] ERROR', e.message);
+    fail(res, 'SYSTEM_ERROR');
+  }
 });
 
 app.post('/payBarCode', async (req, res) => {
@@ -148,18 +230,28 @@ app.post('/productdone', async (req, res) => {
   } catch (e) { console.error('[productdone]', e.message); fail(res, 'SYSTEM_ERROR'); }
 });
 
+// ----------------- Webhook MercadoPago -----------------
 app.post('/mp/webhook', async (req, res) => {
   res.sendStatus(200);
   try {
-    const paymentId = req.body?.data?.id || req.query['data.id'];
-    if (!paymentId) return;
-    const pay = await getPayment(paymentId);
-    if (pay.status !== 'approved') return;
-    const o = orders.get(pay.externalReference);
+    const q = req.query || {};
+    const b = req.body || {};
+    const type = b.type || q.type || q.topic;
+    let orderNo = null, payId = null;
+    if (type === 'payment') {
+      payId = b.data?.id || q['data.id'] || q.id;
+      if (payId) { const pay = await getPayment(payId); if (pay.status === 'approved') orderNo = pay.externalReference; }
+    } else if (type === 'merchant_order') {
+      const moId = b.data?.id || q.id;
+      if (moId) { const mo = await getMerchantOrder(moId); if (mo.paid) orderNo = mo.externalReference; }
+    }
+    console.log(`[mp/webhook] type=${type} orderNo=${orderNo}`);
+    if (!orderNo) return;
+    const o = orders.get(orderNo);
     if (!o) return;
-    o.mpPaymentId = paymentId;
-    await notifyJetinno(o, pay.externalReference, 'PAYSUCCESS', paymentId);
-    console.log(`[webhook] aprobado ${pay.externalReference} -> Jetinno notificado`);
+    if (payId) o.mpPaymentId = payId;
+    await notifyJetinno(o, orderNo, 'PAYSUCCESS', payId);
+    console.log(`[mp/webhook] Jetinno notificado OK ${orderNo}`);
   } catch (e) { console.error('[mp/webhook]', e.message); }
 });
 
@@ -168,11 +260,23 @@ async function notifyJetinno(order, orderNo, payStatus, platBillNo) {
   const data = { deviceNo: order.deviceNo, orderNo, orderAmount: String(order.amountCents), payType: '1001', payStatus };
   if (platBillNo) data.platBillNo = String(platBillNo);
   const s = sign({ username: USERNAME, time, deviceNo: data.deviceNo, orderNo: data.orderNo, orderAmount: data.orderAmount, payType: data.payType, payStatus: data.payStatus }, APIKEY);
-  const res = await fetch(order.notifyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: USERNAME, time, sign: s, data }) });
-  console.log(`[callback->Jetinno] ${orderNo} ${res.status} ${await res.text()}`);
+  const r = await fetch(order.notifyUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: USERNAME, time, sign: s, data }) });
+  console.log(`[callback->Jetinno] ${orderNo} ${r.status} ${await r.text()}`);
 }
 
+// ----------------- Utilidad / diagnóstico -----------------
 app.get('/health', (_req, res) => res.json({ ok: true, mock: mpMock() }));
 app.get('/', (_req, res) => res.send('Jetinno <-> MercadoPago bridge OK'));
+
+// Dispara/inspecciona la creación de la caja (para depurar). Devuelve JSON legible.
+app.get('/setup', async (_req, res) => {
+  if (mpMock()) return res.json({ mock: true, msg: 'Sin MP_ACCESS_TOKEN: modo simulación.' });
+  try {
+    const pos = await ensurePos();
+    res.json({ ok: true, userId: MP_USER_ID, posExternalId: pos });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, body: e.body });
+  }
+});
 
 app.listen(PORT, () => console.log(`Bridge escuchando en :${PORT} (mock=${mpMock()})`));
