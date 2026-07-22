@@ -54,11 +54,10 @@ function verify(message, apikey, { extraSignedFields = [], optionalFields = [] }
 const MP_BASE = 'https://api.mercadopago.com';
 const mpMock = () => !process.env.MP_ACCESS_TOKEN;
 const MP_USER_ID = process.env.MP_USER_ID || '';
-const STORE_TAG = process.env.MP_STORE_TAG || '173840';
-// MercadoPago exige external_id alfanumérico (sin guiones ni guiones bajos).
-const STORE_EXTERNAL_ID = `JETINNOSTORE${STORE_TAG}`;
-const POS_EXTERNAL_ID = process.env.MP_EXTERNAL_POS_ID || `JETINNOPOS${STORE_TAG}`;
-let cachedPos = null; // external_id de la caja, una vez asegurada
+// Una caja (POS) por número de máquina. external_id alfanumérico (sin guiones).
+const posCache = new Map(); // deviceNo -> external_id de su caja
+const storeExtId = (dev) => `JETINNOSTORE${dev}`;
+const posExtId = (dev) => `JETINNOPOS${dev}`;
 
 async function mpFetch(path, { method = 'GET', body } = {}) {
   const res = await fetch(`${MP_BASE}${path}`, {
@@ -72,16 +71,15 @@ async function mpFetch(path, { method = 'GET', body } = {}) {
   return json;
 }
 
-async function findStoreId() {
+async function findStoreId(dev) {
   const r = await mpFetch(`/users/${MP_USER_ID}/stores/search`);
-  const list = r.results || [];
-  const found = list.find((s) => s.external_id === STORE_EXTERNAL_ID);
+  const found = (r.results || []).find((s) => s.external_id === storeExtId(dev));
   return found ? found.id : null;
 }
-async function createStore() {
+async function createStore(dev) {
   const body = {
-    name: `Jetinno ${STORE_TAG}`,
-    external_id: STORE_EXTERNAL_ID,
+    name: `Jetinno ${dev}`,
+    external_id: storeExtId(dev),
     location: {
       street_number: '55',
       street_name: 'Alberti',
@@ -94,43 +92,43 @@ async function createStore() {
   const r = await mpFetch(`/users/${MP_USER_ID}/stores`, { method: 'POST', body });
   return r.id;
 }
-async function findPos() {
-  const r = await mpFetch(`/pos?external_id=${encodeURIComponent(POS_EXTERNAL_ID)}`);
-  const list = r.results || [];
-  return list.find((p) => p.external_id === POS_EXTERNAL_ID) || null;
+async function findPos(dev) {
+  const r = await mpFetch(`/pos?external_id=${encodeURIComponent(posExtId(dev))}`);
+  return (r.results || []).find((p) => p.external_id === posExtId(dev)) || null;
 }
-async function createPos(storeId) {
+async function createPos(dev, storeId) {
   const body = {
-    name: `Caja Jetinno ${STORE_TAG}`,
+    name: `Caja Jetinno ${dev}`,
     fixed_amount: false,
     store_id: storeId,
-    external_id: POS_EXTERNAL_ID,
+    external_id: posExtId(dev),
     category: 621102,
   };
   return mpFetch('/pos', { method: 'POST', body });
 }
 
-// Asegura local + caja. Devuelve el external_id de la caja.
-async function ensurePos() {
-  if (cachedPos) return cachedPos;
+// Asegura local + caja para una máquina. Devuelve el external_id de su caja.
+async function ensurePos(deviceNo) {
+  const dev = String(deviceNo || '173840');
+  if (posCache.has(dev)) return posCache.get(dev);
   if (!MP_USER_ID) throw new Error('Falta MP_USER_ID');
-  let pos = await findPos();
+  let pos = await findPos(dev);
   if (!pos) {
-    let storeId = await findStoreId();
-    if (!storeId) storeId = await createStore();
-    pos = await createPos(storeId);
-    console.log(`[MP] Caja creada: ${POS_EXTERNAL_ID} (store ${storeId})`);
+    let storeId = await findStoreId(dev);
+    if (!storeId) storeId = await createStore(dev);
+    pos = await createPos(dev, storeId);
+    console.log(`[MP] Caja creada para ${dev}: ${posExtId(dev)} (store ${storeId})`);
   } else {
-    console.log(`[MP] Caja existente: ${POS_EXTERNAL_ID}`);
+    console.log(`[MP] Caja existente para ${dev}: ${posExtId(dev)}`);
   }
-  cachedPos = POS_EXTERNAL_ID;
-  return cachedPos;
+  posCache.set(dev, posExtId(dev));
+  return posExtId(dev);
 }
 
 // Crea la orden QR y devuelve el string qr_data.
 async function createQrOrder(p) {
   if (mpMock()) return { qrData: `00020101021143MOCKQR-${p.orderNo}`.slice(0, 300), mpOrderId: `mock-${p.orderNo}` };
-  const posExt = await ensurePos();
+  const posExt = await ensurePos(p.deviceNo);
   // QR dinámico ("QR trama"): POST .../qrs devuelve qr_data (string del QR).
   const path = `/instore/orders/qr/seller/collectors/${MP_USER_ID}/pos/${encodeURIComponent(posExt)}/qrs`;
   const amount = Number(p.amount);
@@ -191,7 +189,7 @@ app.post('/getQrCode', async (req, res) => {
   try {
     if (!checkSign(req, res, { optionalFields: ['payType', 'merchantNo', 'attach'] })) { console.log('[getQrCode] firma/usuario rechazado'); return; }
     const amountCents = parseInt(d.orderAmount, 10);
-    const { qrData, mpOrderId } = await createQrOrder({ orderNo: d.orderNo, amount: amountCents / 100, title: d.productName });
+    const { qrData, mpOrderId } = await createQrOrder({ orderNo: d.orderNo, amount: amountCents / 100, title: d.productName, deviceNo: d.deviceNo });
     orders.set(d.orderNo, { deviceNo: d.deviceNo, amountCents, notifyUrl: d.notifyUrl, productId: d.productId, mpOrderId, mpPaymentId: null });
     console.log(`[getQrCode] OK -> qr len=${qrData.length}`);
     ok(res, { deviceNo: d.deviceNo, orderNo: d.orderNo, qrCode: qrData });
@@ -275,7 +273,7 @@ app.get('/', (_req, res) => res.send('Jetinno <-> MercadoPago bridge OK'));
 app.get('/testqr', async (req, res) => {
   if (mpMock()) return res.json({ mock: true });
   try {
-    const r = await createQrOrder({ orderNo: 'TEST' + Date.now(), amount: Number(req.query.amount || 1), title: 'Prueba' });
+    const r = await createQrOrder({ orderNo: 'TEST' + Date.now(), amount: Number(req.query.amount || 1), title: 'Prueba', deviceNo: req.query.device || '173840' });
     res.json({ ok: true, qrLen: (r.qrData || '').length, qrData: r.qrData, mpOrderId: r.mpOrderId });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message, body: e.body });
@@ -285,8 +283,8 @@ app.get('/testqr', async (req, res) => {
 app.get('/setup', async (_req, res) => {
   if (mpMock()) return res.json({ mock: true, msg: 'Sin MP_ACCESS_TOKEN: modo simulación.' });
   try {
-    const pos = await ensurePos();
-    res.json({ ok: true, userId: MP_USER_ID, posExternalId: pos });
+    const pos = await ensurePos(_req.query.device);
+    res.json({ ok: true, userId: MP_USER_ID, device: String(_req.query.device || '173840'), posExternalId: pos });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message, body: e.body });
   }
