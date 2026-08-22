@@ -1,7 +1,7 @@
 {
   "name": "jetinno-mp-bridge",
-  "version": "1.0.0",
-  "description": "Servidor puente Jetinno <-> MercadoPago QR",
+  "version": "2.0.0",
+  "description": "Plataforma multi-cliente Jetinno <-> MercadoPago QR con panel de administración",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -10,6 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "pg": "^8.23.0"
   }
 }
