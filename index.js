@@ -501,6 +501,42 @@ app.post('/admin/api/machines/:id/delete', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Estadísticas de cobros (estados PAID y DELIVERED cuentan como cobrado)
+const TZ = 'America/Argentina/Buenos_Aires';
+app.get('/admin/api/stats', adminAuth, async (_req, res) => {
+  const empty = { hoy: { n: 0, cents: 0 }, semana: { n: 0, cents: 0 }, mes: { n: 0, cents: 0 }, total: { n: 0, cents: 0 }, reembolsos: { n: 0, cents: 0 }, porMaquina: [], porCliente: [], porDia: [] };
+  if (!dbReady) {
+    // Modo memoria: agregación simple del Map
+    for (const o of memOrders.values()) {
+      if (o.status === 'PAID' || o.status === 'DELIVERED') { empty.total.n++; empty.total.cents += o.amountCents || 0; }
+      if (o.status === 'REFUNDED') { empty.reembolsos.n++; empty.reembolsos.cents += o.amountCents || 0; }
+    }
+    return res.json(empty);
+  }
+  try {
+    const paid = "status IN ('PAID','DELIVERED')";
+    const localDate = `(created_at AT TIME ZONE '${TZ}')::date`;
+    const todayLocal = `(now() AT TIME ZONE '${TZ}')::date`;
+    const q = async (sql, params = []) => (await pool.query(sql, params)).rows;
+    const [hoy] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${localDate} = ${todayLocal}`);
+    const [semana] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND created_at >= now() - interval '7 days'`);
+    const [mes] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND date_trunc('month', created_at AT TIME ZONE '${TZ}') = date_trunc('month', now() AT TIME ZONE '${TZ}')`);
+    const [total] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid}`);
+    const [reem] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE status='REFUNDED'`);
+    const porMaquina = await q(`SELECT device_no, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} GROUP BY device_no ORDER BY c DESC`);
+    const porCliente = await q(`SELECT client_username, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} GROUP BY client_username ORDER BY c DESC`);
+    const porDia = await q(`SELECT ${localDate} d, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND created_at >= now() - interval '14 days' GROUP BY 1 ORDER BY 1`);
+    res.json({
+      hoy: { n: +hoy.n, cents: +hoy.c }, semana: { n: +semana.n, cents: +semana.c },
+      mes: { n: +mes.n, cents: +mes.c }, total: { n: +total.n, cents: +total.c },
+      reembolsos: { n: +reem.n, cents: +reem.c },
+      porMaquina: porMaquina.map((r) => ({ device: r.device_no, n: +r.n, cents: +r.c })),
+      porCliente: porCliente.map((r) => ({ username: r.client_username, n: +r.n, cents: +r.c })),
+      porDia: porDia.map((r) => ({ dia: r.d, n: +r.n, cents: +r.c })),
+    });
+  } catch (e) { console.error('[stats]', e.message); res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/api/orders', adminAuth, async (_req, res) => {
   if (dbReady) {
     const r = await pool.query('SELECT order_no, client_username, device_no, amount_cents, product, status, mp_payment_id, created_at FROM orders ORDER BY created_at DESC LIMIT 100');
@@ -552,6 +588,30 @@ button.sec{background:transparent;border:1px solid var(--bd);color:var(--mut)}
 </div>
 
 <section>
+<h2>💰 Cobros</h2>
+<div class="cards">
+  <div class="card"><div class="n" id="sHoy">–</div><div class="l">Hoy <span id="sHoyN"></span></div></div>
+  <div class="card"><div class="n" id="sSem">–</div><div class="l">Últimos 7 días <span id="sSemN"></span></div></div>
+  <div class="card"><div class="n" id="sMes">–</div><div class="l">Este mes <span id="sMesN"></span></div></div>
+  <div class="card"><div class="n" id="sTot">–</div><div class="l">Histórico <span id="sTotN"></span></div></div>
+</div>
+<div id="chart" style="display:flex;align-items:flex-end;gap:4px;height:90px;margin-top:16px"></div>
+<div class="note" id="chartLbl">Ventas por día (últimos 14 días)</div>
+<div class="grid2" style="margin-top:16px">
+  <div>
+    <h2 style="font-size:13px">Por máquina</h2>
+    <table id="tblStatM"><thead><tr><th>Máquina</th><th>Ventas</th><th>Monto</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div>
+    <h2 style="font-size:13px">Por cliente</h2>
+    <table id="tblStatC"><thead><tr><th>Cliente</th><th>Ventas</th><th>Monto</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+<div class="note" id="sReem"></div>
+<div class="note">Nota: montos brutos cobrados por QR (no descuentan comisiones ni retenciones de MercadoPago).</div>
+</section>
+
+<section>
 <h2>Clientes</h2>
 <table id="tblClients"><thead><tr><th>Nombre</th><th>Username Jetinno</th><th>MP User ID</th><th>MercadoPago</th><th>Estado</th><th></th></tr></thead><tbody></tbody></table>
 <div class="note">Un cliente = una cuenta IOT de Jetinno (username + apikey) + su cuenta de MercadoPago. Sin token de MP, sus QR salen en modo simulación.</div>
@@ -598,7 +658,24 @@ qRUrl: <b id="uQr"></b><br>scanUrl: <b id="uScan"></b><br>refundUrl: <b id="uRef
 const api=(p,opt)=>fetch('/admin/api/'+p,opt).then(r=>r.json());
 const money=c=>'$'+(c/100).toFixed(2);
 const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+async function refreshStats(){
+  const s=await api('stats');
+  if(s.error) return;
+  sHoy.textContent=money(s.hoy.cents); sHoyN.textContent='('+s.hoy.n+' ventas)';
+  sSem.textContent=money(s.semana.cents); sSemN.textContent='('+s.semana.n+')';
+  sMes.textContent=money(s.mes.cents); sMesN.textContent='('+s.mes.n+')';
+  sTot.textContent=money(s.total.cents); sTotN.textContent='('+s.total.n+')';
+  sReem.textContent=s.reembolsos.n?('Reembolsos: '+s.reembolsos.n+' por '+money(s.reembolsos.cents)):'';
+  tblStatM.tBodies[0].innerHTML=s.porMaquina.map(m=>'<tr><td><b>'+esc(m.device)+'</b></td><td>'+m.n+'</td><td>'+money(m.cents)+'</td></tr>').join('')||'<tr><td colspan=3 style="color:var(--mut)">Sin ventas aún</td></tr>';
+  tblStatC.tBodies[0].innerHTML=s.porCliente.map(c=>'<tr><td><b>'+esc(c.username)+'</b></td><td>'+c.n+'</td><td>'+money(c.cents)+'</td></tr>').join('')||'<tr><td colspan=3 style="color:var(--mut)">Sin ventas aún</td></tr>';
+  const days=[...Array(14)].map((_,i)=>{const d=new Date(Date.now()-(13-i)*864e5);return d.toISOString().slice(0,10);});
+  const map={}; (s.porDia||[]).forEach(r=>{map[String(r.dia).slice(0,10)]=r.cents;});
+  const max=Math.max(1,...days.map(d=>map[d]||0));
+  chart.innerHTML=days.map(d=>{const v=map[d]||0;const h=Math.max(3,Math.round(v/max*82));
+    return '<div title="'+d+': '+money(v)+'" style="flex:1;background:'+(v?'var(--acc)':'var(--bd)')+';height:'+h+'px;border-radius:3px 3px 0 0"></div>';}).join('');
+}
 async function refresh(){
+  refreshStats();
   const st=await api('status');
   stClients.textContent=st.clients; stMachines.textContent=st.machines; stOrders.textContent=st.orders;
   stDb.textContent=st.db?'✔':'✖'; warnDb.style.display=st.db?'none':'block';
