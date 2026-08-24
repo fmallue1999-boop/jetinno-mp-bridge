@@ -584,167 +584,292 @@ app.get('/admin/api/orders', adminAuth, async (_req, res) => {
 app.get('/admin', adminAuth, (_req, res) => {
   res.type('html').send(`<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Panel Jetinno + MercadoPago</title>
+<title>Jetinno · MercadoPago — Panel</title>
 <style>
-:root{--bg:#0f1115;--card:#181b22;--tx:#e8e8ea;--mut:#9aa0ab;--acc:#3b82f6;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444;--bd:#262a33}
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
-header{padding:18px 24px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:12px}
-header h1{font-size:18px;margin:0}header .tag{font-size:12px;color:var(--mut)}
-main{max-width:1100px;margin:0 auto;padding:24px;display:grid;gap:20px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px}
-.card .n{font-size:26px;font-weight:700}.card .l{font-size:12px;color:var(--mut)}
-section{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:20px}
-h2{font-size:15px;margin:0 0 14px}
+:root{--bg:#0b0d12;--card:#151922;--card2:#1b2130;--tx:#e9ecf2;--mut:#8b93a3;--acc:#4f8cff;--acc2:#3465c9;--ok:#2ecc71;--warn:#f5a623;--err:#ff5c5c;--bd:#252c3b;--r:14px}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+.topbar{position:sticky;top:0;z-index:50;background:rgba(11,13,18,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--bd)}
+.topin{max-width:1180px;margin:0 auto;padding:14px 22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.brand{font-weight:800;font-size:16px;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--err)}
+.brand .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.tabs{display:flex;gap:4px;background:var(--card);padding:4px;border-radius:12px;border:1px solid var(--bd)}
+.tab{border:0;background:transparent;color:var(--mut);padding:8px 16px;border-radius:9px;cursor:pointer;font-size:13.5px;font-weight:600;transition:.15s}
+.tab:hover{color:var(--tx)}
+.tab.active{background:var(--acc);color:#fff;box-shadow:0 2px 10px rgba(79,140,255,.35)}
+.spacer{flex:1}
+.rbtn{border:1px solid var(--bd);background:var(--card);color:var(--mut);border-radius:9px;padding:8px 13px;cursor:pointer}
+.rbtn:hover{color:var(--tx)}
+main{max-width:1180px;margin:0 auto;padding:24px 22px 60px}
+.pane{display:none}.pane.active{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);padding:18px}
+.kpi .v{font-size:26px;font-weight:800;margin-top:2px}
+.kpi .l{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+.kpi .s{font-size:12px;color:var(--mut);margin-top:4px}
+h2{font-size:15px;margin:0 0 14px;font-weight:700}
+.sect{margin-top:22px}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{color:var(--mut);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--bd)}
-td{padding:8px;border-bottom:1px solid var(--bd)}
-.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px}
-.b-ok{background:#14351f;color:var(--ok)}.b-off{background:#3a1620;color:var(--err)}.b-warn{background:#3a2b10;color:var(--warn)}.b-info{background:#12233f;color:#7fb1ff}
-input,select{background:#0f1115;border:1px solid var(--bd);color:var(--tx);border-radius:8px;padding:9px 10px;font-size:13px;width:100%}
-label{font-size:12px;color:var(--mut);display:block;margin:10px 0 4px}
-button{background:var(--acc);border:0;color:#fff;border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer}
-button.sec{background:transparent;border:1px solid var(--bd);color:var(--mut)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.note{font-size:12px;color:var(--mut);margin-top:10px;line-height:1.5}
-.warnbar{background:#3a2b10;color:var(--warn);padding:10px 14px;border-radius:8px;font-size:13px;display:none}
-@media(max-width:700px){.grid2{grid-template-columns:1fr}}
+th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--bd);font-size:11.5px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:10px;border-bottom:1px solid var(--bd)}
+tbody tr:hover{background:rgba(79,140,255,.05)}
+.badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600}
+.b-ok{background:rgba(46,204,113,.13);color:var(--ok)}.b-err{background:rgba(255,92,92,.13);color:var(--err)}
+.b-warn{background:rgba(245,166,35,.13);color:var(--warn)}.b-info{background:rgba(79,140,255,.13);color:#8ab4ff}
+input,select{background:#0e1117;border:1px solid var(--bd);color:var(--tx);border-radius:10px;padding:10px 12px;font-size:13.5px;width:100%;outline:0;transition:.15s}
+input:focus,select:focus{border-color:var(--acc)}
+label{font-size:11.5px;color:var(--mut);display:block;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+button.pri{background:var(--acc);border:0;color:#fff;border-radius:10px;padding:11px 20px;font-size:13.5px;font-weight:700;cursor:pointer;transition:.15s}
+button.pri:hover{background:var(--acc2)}
+button.sec{background:transparent;border:1px solid var(--bd);color:var(--mut);border-radius:9px;padding:7px 13px;font-size:12.5px;cursor:pointer}
+button.sec:hover{color:var(--tx);border-color:var(--mut)}
+button.dng{background:transparent;border:1px solid rgba(255,92,92,.4);color:var(--err);border-radius:9px;padding:7px 13px;font-size:12.5px;cursor:pointer}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+@media(max-width:760px){.grid2,.grid3{grid-template-columns:1fr}}
+.note{font-size:12.5px;color:var(--mut);line-height:1.6}
+.hint{background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);border-radius:12px;padding:12px 16px;font-size:12.5px;color:#e8c583;margin-bottom:16px}
+details.grp{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+details.grp summary{cursor:pointer;padding:15px 18px;font-weight:700;display:flex;align-items:center;gap:10px;list-style:none;user-select:none}
+details.grp summary::-webkit-details-marker{display:none}
+details.grp summary .chev{transition:.2s;color:var(--mut)}
+details.grp[open] summary .chev{transform:rotate(90deg)}
+details.grp summary .cnt{color:var(--mut);font-weight:500;font-size:12.5px}
+details.grp .inner{padding:0 18px 14px}
+#chart{display:flex;align-items:flex-end;gap:5px;height:110px;margin-top:6px}
+#chart .bar{flex:1;border-radius:4px 4px 0 0;background:var(--acc);min-height:3px;position:relative;transition:.15s}
+#chart .bar.z{background:var(--bd)}
+#chart .bar:hover{filter:brightness(1.3)}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--card2);border:1px solid var(--bd);border-left:4px solid var(--ok);border-radius:12px;padding:14px 20px;font-size:13.5px;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;transform:translateY(10px);transition:.25s;z-index:99;max-width:340px}
+.toast.show{opacity:1;transform:none}
+.toast.err{border-left-color:var(--err)}
+.codebox{font-family:Consolas,monospace;font-size:12px;color:#9ab8ff;background:#0e1117;border:1px solid var(--bd);border-radius:8px;padding:10px 12px;margin-top:6px;word-break:break-all}
+.formcard{display:none}.formcard.open{display:block;animation:fade .18s ease}
+.thead-actions{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px}
+.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.filters select,.filters input{width:auto;min-width:150px}
 </style></head><body>
-<header><h1>☕ Panel Jetinno + MercadoPago</h1><span class="tag">multi-cliente</span></header>
+<div class="topbar"><div class="topin">
+  <div class="brand"><span class="dot" id="dbDot"></span> ☕ Jetinno · MercadoPago</div>
+  <div class="tabs">
+    <button class="tab active" data-tab="dash">📊 Dashboard</button>
+    <button class="tab" data-tab="cli">👥 Clientes</button>
+    <button class="tab" data-tab="maq">🖥 Máquinas</button>
+    <button class="tab" data-tab="ord">🧾 Órdenes</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="rbtn" id="btnRefresh">⟳ Actualizar</button>
+</div></div>
 <main>
-<div id="warnDb" class="warnbar">⚠️ Sin base de datos conectada: los clientes que agregues se pierden al reiniciar. Configurá DATABASE_URL para persistencia.</div>
-<div class="cards">
-  <div class="card"><div class="n" id="stClients">–</div><div class="l">Clientes</div></div>
-  <div class="card"><div class="n" id="stMachines">–</div><div class="l">Máquinas</div></div>
-  <div class="card"><div class="n" id="stOrders">–</div><div class="l">Órdenes</div></div>
-  <div class="card"><div class="n" id="stDb">–</div><div class="l">Base de datos</div></div>
-</div>
 
-<section>
-<h2>💰 Cobros</h2>
-<div class="cards">
-  <div class="card"><div class="n" id="sHoy">–</div><div class="l">Hoy <span id="sHoyN"></span></div></div>
-  <div class="card"><div class="n" id="sSem">–</div><div class="l">Últimos 7 días <span id="sSemN"></span></div></div>
-  <div class="card"><div class="n" id="sMes">–</div><div class="l">Este mes <span id="sMesN"></span></div></div>
-  <div class="card"><div class="n" id="sTot">–</div><div class="l">Histórico <span id="sTotN"></span></div></div>
-</div>
-<div id="chart" style="display:flex;align-items:flex-end;gap:4px;height:90px;margin-top:16px"></div>
-<div class="note" id="chartLbl">Ventas por día (últimos 14 días)</div>
-<div class="grid2" style="margin-top:16px">
-  <div>
-    <h2 style="font-size:13px">Por máquina</h2>
-    <table id="tblStatM"><thead><tr><th>Máquina</th><th>Ventas</th><th>Monto</th></tr></thead><tbody></tbody></table>
+<div class="pane active" id="pane-dash">
+  <div class="grid4">
+    <div class="card kpi"><div class="l">Hoy</div><div class="v" id="kHoy">–</div><div class="s" id="kHoyN"></div></div>
+    <div class="card kpi"><div class="l">Últimos 7 días</div><div class="v" id="kSem">–</div><div class="s" id="kSemN"></div></div>
+    <div class="card kpi"><div class="l">Este mes</div><div class="v" id="kMes">–</div><div class="s" id="kMesN"></div></div>
+    <div class="card kpi"><div class="l">Histórico</div><div class="v" id="kTot">–</div><div class="s" id="kTotN"></div></div>
   </div>
-  <div>
-    <h2 style="font-size:13px">Por cliente</h2>
-    <table id="tblStatC"><thead><tr><th>Cliente</th><th>Ventas</th><th>Monto</th></tr></thead><tbody></tbody></table>
+  <div class="sect card">
+    <h2>Ventas por día — últimos 14 días</h2>
+    <div id="chart"></div>
+  </div>
+  <div class="sect grid2">
+    <div class="card"><h2>Por máquina</h2><table><thead><tr><th>Máquina</th><th>Ventas</th><th>Monto</th></tr></thead><tbody id="tbM"></tbody></table></div>
+    <div class="card"><h2>Por cliente</h2><table><thead><tr><th>Cliente</th><th>Ventas</th><th>Monto</th></tr></thead><tbody id="tbC"></tbody></table></div>
+  </div>
+  <div class="sect grid4">
+    <div class="card kpi"><div class="l">Clientes</div><div class="v" id="kCli">–</div></div>
+    <div class="card kpi"><div class="l">Máquinas</div><div class="v" id="kMaq">–</div></div>
+    <div class="card kpi"><div class="l">Órdenes</div><div class="v" id="kOrd">–</div></div>
+    <div class="card kpi"><div class="l">Reembolsos</div><div class="v" id="kReem">–</div><div class="s" id="kReemN"></div></div>
   </div>
 </div>
-<div class="note" id="sReem"></div>
-<div class="note">Nota: montos brutos cobrados por QR (no descuentan comisiones ni retenciones de MercadoPago).</div>
-</section>
 
-<section>
-<h2>Clientes</h2>
-<table id="tblClients"><thead><tr><th>Nombre</th><th>Username Jetinno</th><th>MP User ID</th><th>MercadoPago</th><th>Estado</th><th></th></tr></thead><tbody></tbody></table>
-<div class="note">Un cliente = un nombre identificador + su cuenta de MercadoPago. La apikey de Jetinno solo hace falta para cuentas nivel 1 (como AR1362); los clientes ruteados por máquina no la necesitan. Sin token de MP, sus QR salen en modo simulación.</div>
-</section>
-
-<section>
-<h2>Agregar / actualizar cliente</h2>
-<div class="grid2">
-  <div><label>Nombre del cliente</label><input id="fName" placeholder="Ej: Café López SRL"></div>
-  <div><label>Username Jetinno (cuenta IOT)</label><input id="fUser" placeholder="Ej: AR9999"></div>
-  <div><label>Apikey Jetinno (opcional — solo cuentas nivel 1)</label><input id="fKey" placeholder="Dejar vacío para clientes por máquina"></div>
-  <div><label>MP User ID (número al final del token)</label><input id="fMpId" placeholder="Ej: 2980081299"></div>
-  <div style="grid-column:1/-1"><label>Access Token de MercadoPago del cliente</label><input id="fMpTok" placeholder="APP_USR-..." type="password"></div>
+<div class="pane" id="pane-cli">
+  <div class="thead-actions"><h2 style="margin:0">Clientes</h2><button class="pri" id="btnNewCli">＋ Nuevo cliente</button></div>
+  <div class="card formcard" id="cliForm">
+    <h2 id="cliFormTitle">Nuevo cliente</h2>
+    <div class="grid2">
+      <div><label>Nombre</label><input id="fName" placeholder="Ej: Café López SRL"></div>
+      <div><label>Username / identificador</label><input id="fUser" placeholder="Ej: LaFonteMaster"></div>
+      <div><label>Apikey Jetinno (solo cuentas nivel 1)</label><input id="fKey" placeholder="Vacío para clientes por máquina"></div>
+      <div><label>MP User ID (número final del token)</label><input id="fMpId" placeholder="Ej: 2980081299"></div>
+    </div>
+    <label>Access Token de MercadoPago del cliente</label><input id="fMpTok" type="password" placeholder="APP_USR-...">
+    <div style="margin-top:16px;display:flex;gap:10px">
+      <button class="pri" id="btnSaveCli">Guardar</button>
+      <button class="sec" id="btnCancelCli">Cancelar</button>
+    </div>
+    <div class="note" style="margin-top:10px">Para actualizar un cliente existente usá el mismo username: los campos vacíos no pisan lo guardado.</div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <table><thead><tr><th>Nombre</th><th>Username</th><th>MP User ID</th><th>MercadoPago</th><th>Estado</th><th style="text-align:right">Acciones</th></tr></thead><tbody id="tbCli"></tbody></table>
+  </div>
+  <div class="card sect">
+    <h2>Datos para alta en Jetinno (siempre los mismos)</h2>
+    <div class="note">Si Jetinno pide las URLs de pago, son estas:</div>
+    <div class="codebox" id="urlsBox"></div>
+  </div>
 </div>
-<div style="margin-top:14px;display:flex;gap:10px;align-items:center">
-  <button onclick="saveClient()">Guardar cliente</button><span id="saveMsg" class="note"></span>
+
+<div class="pane" id="pane-maq">
+  <div class="hint">⚠️ La asignación decide a qué MercadoPago va la plata: máquina asignada a un cliente → cobra en el MP de ese cliente. Sin asignar → cobra en el MP de la cuenta principal.</div>
+  <div class="thead-actions"><h2 style="margin:0">Máquinas por cliente</h2><button class="pri" id="btnNewMaq">＋ Asignar máquina</button></div>
+  <div class="card formcard" id="maqForm">
+    <h2>Asignar máquina</h2>
+    <div class="grid3">
+      <div><label>N° de máquina (vmc_no)</label><input id="mDev" placeholder="Ej: 181370"></div>
+      <div><label>Cliente</label><select id="mCli"></select></div>
+      <div><label>Etiqueta / ubicación</label><input id="mLabel" placeholder="Ej: La Fonte - Jujuy"></div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:10px">
+      <button class="pri" id="btnSaveMaq">Guardar</button>
+      <button class="sec" id="btnCancelMaq">Cancelar</button>
+    </div>
+  </div>
+  <div id="maqGroups" style="margin-top:14px"></div>
 </div>
-<div class="note">Para actualizar un cliente existente, usá el mismo username: los campos vacíos de MP no pisan los guardados.</div>
-</section>
 
-<section>
-<h2>Máquinas — ⚠️ acá se decide a qué MercadoPago va la plata de cada equipo</h2>
-<div class="note">Al asignar una máquina a un cliente, sus cobros van al MercadoPago de ESE cliente. Las máquinas sin asignar cobran en el MercadoPago de la cuenta principal.</div>
-<table id="tblMachines"><thead><tr><th>N° máquina</th><th>Cliente</th><th>Etiqueta</th><th></th></tr></thead><tbody></tbody></table>
-<div class="grid2" style="margin-top:12px">
-  <div><label>N° de máquina (vmc_no)</label><input id="mDev" placeholder="Ej: 173840"></div>
-  <div><label>Username del cliente</label><input id="mUser" placeholder="Ej: AR1362"></div>
-  <div style="grid-column:1/-1"><label>Etiqueta / ubicación</label><input id="mLabel" placeholder="Ej: Alberti 55 - hall"></div>
+<div class="pane" id="pane-ord">
+  <h2>Órdenes</h2>
+  <div class="filters">
+    <select id="oCli"><option value="">Todos los clientes</option></select>
+    <select id="oEst"><option value="">Todos los estados</option><option>PAID</option><option>DELIVERED</option><option>PENDING</option><option>PAYING</option><option>REFUNDED</option></select>
+    <input id="oBusca" placeholder="Buscar orden o máquina...">
+  </div>
+  <div class="card">
+    <table><thead><tr><th>Fecha</th><th>Orden</th><th>Cliente (MP)</th><th>Máquina</th><th>Producto</th><th>Monto</th><th>Estado</th></tr></thead><tbody id="tbOrd"></tbody></table>
+  </div>
 </div>
-<div style="margin-top:12px"><button onclick="saveMachine()">Registrar máquina</button> <span id="mMsg" class="note"></span></div>
-</section>
 
-<section>
-<h2>Últimas órdenes</h2>
-<table id="tblOrders"><thead><tr><th>Fecha</th><th>Orden</th><th>Cliente</th><th>Máquina</th><th>Producto</th><th>Monto</th><th>Estado</th></tr></thead><tbody></tbody></table>
-</section>
-
-<section>
-<h2>Datos para dar de alta un cliente en Jetinno</h2>
-<div class="note">Cuando Jetinno cree la cuenta IOT del cliente, pasales estas URLs (las mismas para todos los clientes):<br><br>
-qRUrl: <b id="uQr"></b><br>scanUrl: <b id="uScan"></b><br>refundUrl: <b id="uRef"></b></div>
-</section>
 </main>
+<div class="toast" id="toast"></div>
 <script>
-const api=(p,opt)=>fetch('/admin/api/'+p,opt).then(r=>r.json());
-const money=c=>'$'+(c/100).toFixed(2);
-const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
-async function refreshStats(){
-  const s=await api('stats');
-  if(s.error) return;
-  sHoy.textContent=money(s.hoy.cents); sHoyN.textContent='('+s.hoy.n+' ventas)';
-  sSem.textContent=money(s.semana.cents); sSemN.textContent='('+s.semana.n+')';
-  sMes.textContent=money(s.mes.cents); sMesN.textContent='('+s.mes.n+')';
-  sTot.textContent=money(s.total.cents); sTotN.textContent='('+s.total.n+')';
-  sReem.textContent=s.reembolsos.n?('Reembolsos: '+s.reembolsos.n+' por '+money(s.reembolsos.cents)):'';
-  tblStatM.tBodies[0].innerHTML=s.porMaquina.map(m=>'<tr><td><b>'+esc(m.device)+'</b></td><td>'+m.n+'</td><td>'+money(m.cents)+'</td></tr>').join('')||'<tr><td colspan=3 style="color:var(--mut)">Sin ventas aún</td></tr>';
-  tblStatC.tBodies[0].innerHTML=s.porCliente.map(c=>'<tr><td><b>'+esc(c.username)+'</b></td><td>'+c.n+'</td><td>'+money(c.cents)+'</td></tr>').join('')||'<tr><td colspan=3 style="color:var(--mut)">Sin ventas aún</td></tr>';
-  const days=[...Array(14)].map((_,i)=>{const d=new Date(Date.now()-(13-i)*864e5);return d.toISOString().slice(0,10);});
-  const map={}; (s.porDia||[]).forEach(r=>{map[String(r.dia).slice(0,10)]=r.cents;});
-  const max=Math.max(1,...days.map(d=>map[d]||0));
-  chart.innerHTML=days.map(d=>{const v=map[d]||0;const h=Math.max(3,Math.round(v/max*82));
-    return '<div title="'+d+': '+money(v)+'" style="flex:1;background:'+(v?'var(--acc)':'var(--bd)')+';height:'+h+'px;border-radius:3px 3px 0 0"></div>';}).join('');
+var api=function(p,opt){return fetch('/admin/api/'+p,opt).then(function(r){return r.json()})};
+var $=function(id){return document.getElementById(id)};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]})};
+var money=function(c){return '$'+((c||0)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})};
+var D={clients:[],machines:[],orders:[],stats:null,status:null};
+var toastT;
+function toast(msg,err){var t=$('toast');t.textContent=msg;t.className='toast show'+(err?' err':'');clearTimeout(toastT);toastT=setTimeout(function(){t.className='toast'},3200)}
+
+document.querySelectorAll('.tab').forEach(function(b){b.onclick=function(){
+  document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+  document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('active')});
+  b.classList.add('active');$('pane-'+b.dataset.tab).classList.add('active');
+}});
+
+function badge(txt,cls){return '<span class="badge '+cls+'">'+esc(txt)+'</span>'}
+
+function renderDash(){
+  var s=D.stats;if(!s||s.error)return;
+  $('kHoy').textContent=money(s.hoy.cents);$('kHoyN').textContent=s.hoy.n+' ventas';
+  $('kSem').textContent=money(s.semana.cents);$('kSemN').textContent=s.semana.n+' ventas';
+  $('kMes').textContent=money(s.mes.cents);$('kMesN').textContent=s.mes.n+' ventas';
+  $('kTot').textContent=money(s.total.cents);$('kTotN').textContent=s.total.n+' ventas';
+  $('kReem').textContent=s.reembolsos.n;$('kReemN').textContent=money(s.reembolsos.cents);
+  var st=D.status||{};$('kCli').textContent=st.clients!=null?st.clients:'–';$('kMaq').textContent=st.machines!=null?st.machines:'–';$('kOrd').textContent=st.orders!=null?st.orders:'–';
+  $('dbDot').className='dot'+(st.db?' on':'');
+  $('tbM').innerHTML=(s.porMaquina||[]).map(function(m){
+    var mm=D.machines.find(function(x){return x.device_no===m.device});
+    var lbl=mm&&mm.label?' <span style="color:var(--mut)">· '+esc(mm.label)+'</span>':'';
+    return '<tr><td><b>'+esc(m.device)+'</b>'+lbl+'</td><td>'+m.n+'</td><td>'+money(m.cents)+'</td></tr>'}).join('')||'<tr><td colspan=3 class="note">Sin ventas aún</td></tr>';
+  $('tbC').innerHTML=(s.porCliente||[]).map(function(c){
+    var cc=D.clients.find(function(x){return x.username===c.username});
+    return '<tr><td><b>'+esc(cc?cc.name:c.username)+'</b></td><td>'+c.n+'</td><td>'+money(c.cents)+'</td></tr>'}).join('')||'<tr><td colspan=3 class="note">Sin ventas aún</td></tr>';
+  var days=[],i;for(i=13;i>=0;i--){var d=new Date(Date.now()-i*864e5);days.push(d.toISOString().slice(0,10))}
+  var map={};(s.porDia||[]).forEach(function(r){map[String(r.dia).slice(0,10)]=r.cents});
+  var max=Math.max.apply(null,[1].concat(days.map(function(d){return map[d]||0})));
+  $('chart').innerHTML=days.map(function(d){var v=map[d]||0;var h=Math.max(3,Math.round(v/max*100));
+    return '<div class="bar'+(v?'':' z')+'" style="height:'+h+'px" title="'+d+': '+money(v)+'"></div>'}).join('');
 }
-async function refresh(){
-  refreshStats();
-  const st=await api('status');
-  stClients.textContent=st.clients; stMachines.textContent=st.machines; stOrders.textContent=st.orders;
-  stDb.textContent=st.db?'✔':'✖'; warnDb.style.display=st.db?'none':'block';
-  const base=location.origin; uQr.textContent=base+'/getQrCode'; uScan.textContent=base+'/payBarCode'; uRef.textContent=base+'/refund';
-  const cs=await api('clients');
-  tblClients.tBodies[0].innerHTML=cs.map(c=>'<tr><td>'+esc(c.name)+'</td><td><b>'+esc(c.username)+'</b></td><td>'+esc(c.mpUserId||'—')+'</td>'+
-    '<td>'+(c.hasMp?'<span class="badge b-ok">conectado</span>':'<span class="badge b-warn">simulación</span>')+'</td>'+
-    '<td>'+(c.active?'<span class="badge b-ok">activo</span>':'<span class="badge b-off">pausado</span>')+'</td>'+
-    '<td><button class="sec" onclick="toggleC(\\''+esc(c.username)+'\\')">'+(c.active?'Pausar':'Activar')+'</button></td></tr>').join('');
-  const ms=await api('machines');
-  tblMachines.tBodies[0].innerHTML=ms.map(m=>'<tr><td><b>'+esc(m.device_no)+'</b></td><td>'+esc(m.client_name||m.username||'—')+'</td><td>'+esc(m.label||'')+'</td>'+
-    '<td><button class="sec" onclick="delM('+m.id+')">Quitar</button></td></tr>').join('')||'<tr><td colspan=4 style="color:var(--mut)">Sin máquinas registradas</td></tr>';
-  const os=await api('orders');
-  tblOrders.tBodies[0].innerHTML=os.map(o=>{
-    const b={PAID:'b-ok',DELIVERED:'b-ok',PENDING:'b-info',PAYING:'b-info',REFUNDED:'b-warn'}[o.status]||'b-off';
-    const dt=o.created_at?new Date(o.created_at).toLocaleString('es-AR'):'—';
-    return '<tr><td>'+dt+'</td><td style="font-family:monospace;font-size:11px">'+esc(o.order_no)+'</td><td>'+esc(o.client_username||'')+'</td><td>'+esc(o.device_no||'')+'</td><td>'+esc(o.product||'')+'</td><td>'+money(o.amount_cents||0)+'</td><td><span class="badge '+b+'">'+esc(o.status)+'</span></td></tr>';
-  }).join('')||'<tr><td colspan=7 style="color:var(--mut)">Sin órdenes todavía</td></tr>';
+
+function renderClients(){
+  $('tbCli').innerHTML=D.clients.map(function(c){
+    return '<tr><td><b>'+esc(c.name)+'</b></td><td>'+esc(c.username)+'</td><td>'+esc(c.mpUserId||'—')+'</td>'+
+    '<td>'+(c.hasMp?badge('conectado','b-ok'):badge('simulación','b-warn'))+'</td>'+
+    '<td>'+(c.active?badge('activo','b-ok'):badge('pausado','b-err'))+'</td>'+
+    '<td style="text-align:right"><button class="sec" data-act="edit" data-u="'+esc(c.username)+'">Editar</button> '+
+    '<button class="'+(c.active?'dng':'sec')+'" data-act="toggle" data-u="'+esc(c.username)+'">'+(c.active?'Pausar':'Activar')+'</button></td></tr>'}).join('')||'<tr><td colspan=6 class="note">Sin clientes</td></tr>';
+  $('urlsBox').innerHTML='qRUrl: '+location.origin+'/getQrCode<br>scanUrl: '+location.origin+'/payBarCode<br>refundUrl: '+location.origin+'/refund';
 }
-async function saveClient(){
-  saveMsg.textContent='Guardando...';
-  const r=await api('clients',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:fName.value,username:fUser.value.trim(),apikey:fKey.value.trim(),mpUserId:fMpId.value.trim(),mpToken:fMpTok.value.trim()})});
-  saveMsg.textContent=r.ok?('✔ Guardado.'+(r.warning?' '+r.warning:'')):('✖ '+(r.error||'error'));
-  if(r.ok){fName.value=fUser.value=fKey.value=fMpId.value=fMpTok.value='';}
-  refresh();
+
+function renderMachines(){
+  var sel=$('mCli');var cur=sel.value;
+  sel.innerHTML=D.clients.map(function(c){return '<option value="'+esc(c.username)+'">'+esc(c.name)+' ('+esc(c.username)+')</option>'}).join('');
+  if(cur)sel.value=cur;
+  var groups={};
+  D.machines.forEach(function(m){var k=m.username||'(sin cliente)';(groups[k]=groups[k]||[]).push(m)});
+  var html=Object.keys(groups).map(function(u){
+    var cc=D.clients.find(function(x){return x.username===u});
+    var name=cc?cc.name:u;
+    var rows=groups[u].map(function(m){
+      return '<tr><td><b>'+esc(m.device_no)+'</b></td><td>'+esc(m.label||'—')+'</td>'+
+      '<td style="text-align:right"><button class="dng" data-act="delmaq" data-id="'+m.id+'">Quitar</button></td></tr>'}).join('');
+    return '<details class="grp" open><summary><span class="chev">▶</span> '+esc(name)+' <span class="cnt">· '+groups[u].length+' máquina'+(groups[u].length>1?'s':'')+'</span></summary>'+
+    '<div class="inner"><table><thead><tr><th>N° máquina</th><th>Etiqueta</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></details>'}).join('');
+  $('maqGroups').innerHTML=html||'<div class="card note">Sin máquinas asignadas. Las máquinas sin asignar cobran en la cuenta principal.</div>';
 }
-async function toggleC(u){await api('clients/'+encodeURIComponent(u)+'/toggle',{method:'POST'});refresh();}
-async function saveMachine(){
-  const r=await api('machines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceNo:mDev.value.trim(),username:mUser.value.trim(),label:mLabel.value})});
-  mMsg.textContent=r.ok?'✔ Registrada':'✖ '+(r.error||'error');
-  if(r.ok){mDev.value=mUser.value=mLabel.value='';}
-  refresh();
+
+function renderOrders(){
+  var selCli=$('oCli');var cur=selCli.value;
+  var owners={};D.orders.forEach(function(o){var u=o.mp_username||o.client_username;if(u)owners[u]=1});
+  selCli.innerHTML='<option value="">Todos los clientes</option>'+Object.keys(owners).map(function(u){
+    var cc=D.clients.find(function(x){return x.username===u});
+    return '<option value="'+esc(u)+'">'+esc(cc?cc.name:u)+'</option>'}).join('');
+  if(cur)selCli.value=cur;
+  var fc=selCli.value,fe=$('oEst').value,fb=$('oBusca').value.toLowerCase();
+  var rows=D.orders.filter(function(o){
+    var owner=o.mp_username||o.client_username||'';
+    if(fc&&owner!==fc)return false;
+    if(fe&&o.status!==fe)return false;
+    if(fb&&String(o.order_no).toLowerCase().indexOf(fb)<0&&String(o.device_no).indexOf(fb)<0)return false;
+    return true;
+  }).map(function(o){
+    var b={PAID:'b-ok',DELIVERED:'b-ok',PENDING:'b-info',PAYING:'b-info',REFUNDED:'b-warn'}[o.status]||'b-err';
+    var dt=o.created_at?new Date(o.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+    var owner=o.mp_username||o.client_username||'';
+    var cc=D.clients.find(function(x){return x.username===owner});
+    return '<tr><td>'+dt+'</td><td style="font-family:monospace;font-size:11px">'+esc(o.order_no)+'</td><td>'+esc(cc?cc.name:owner)+'</td><td>'+esc(o.device_no||'')+'</td><td>'+esc(o.product||'')+'</td><td><b>'+money(o.amount_cents)+'</b></td><td>'+badge(o.status,b)+'</td></tr>'});
+  $('tbOrd').innerHTML=rows.join('')||'<tr><td colspan=7 class="note">Sin órdenes</td></tr>';
 }
-async function delM(id){await api('machines/'+id+'/delete',{method:'POST'});refresh();}
-refresh();setInterval(refresh,30000);
+
+function renderAll(){renderDash();renderClients();renderMachines();renderOrders()}
+function loadAll(){
+  Promise.all([api('status'),api('stats'),api('clients'),api('machines'),api('orders')]).then(function(r){
+    D.status=r[0];D.stats=r[1];D.clients=r[2];D.machines=r[3];D.orders=r[4];renderAll();
+  }).catch(function(){toast('Error cargando datos',true)});
+}
+
+$('btnRefresh').onclick=function(){loadAll();toast('Actualizado')};
+$('btnNewCli').onclick=function(){$('cliFormTitle').textContent='Nuevo cliente';$('cliForm').classList.toggle('open')};
+$('btnCancelCli').onclick=function(){$('cliForm').classList.remove('open');['fName','fUser','fKey','fMpId','fMpTok'].forEach(function(i){$(i).value=''})};
+$('btnSaveCli').onclick=function(){
+  api('clients',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('fName').value,username:$('fUser').value.trim(),apikey:$('fKey').value.trim(),mpUserId:$('fMpId').value.trim(),mpToken:$('fMpTok').value.trim()})})
+  .then(function(r){if(r.ok){toast('Cliente guardado'+(r.warning?' — '+r.warning:''));$('btnCancelCli').onclick();loadAll()}else toast(r.error||'Error',true)});
+};
+$('btnNewMaq').onclick=function(){$('maqForm').classList.toggle('open')};
+$('btnCancelMaq').onclick=function(){$('maqForm').classList.remove('open');$('mDev').value='';$('mLabel').value=''};
+$('btnSaveMaq').onclick=function(){
+  api('machines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceNo:$('mDev').value.trim(),username:$('mCli').value,label:$('mLabel').value})})
+  .then(function(r){if(r.ok){toast('Máquina asignada');$('btnCancelMaq').onclick();loadAll()}else toast(r.error||'Error',true)});
+};
+$('tbCli').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  if(b.dataset.act==='toggle'){api('clients/'+encodeURIComponent(b.dataset.u)+'/toggle',{method:'POST'}).then(function(){toast('Estado actualizado');loadAll()})}
+  if(b.dataset.act==='edit'){var c=D.clients.find(function(x){return x.username===b.dataset.u});if(!c)return;
+    $('cliFormTitle').textContent='Editar: '+c.name;$('fName').value=c.name;$('fUser').value=c.username;$('fMpId').value=c.mpUserId||'';
+    $('cliForm').classList.add('open');window.scrollTo({top:0,behavior:'smooth'})}
+});
+$('maqGroups').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b||b.dataset.act!=='delmaq')return;
+  if(!confirm('¿Quitar esta máquina de su cliente? Volverá a cobrar en la cuenta principal.'))return;
+  api('machines/'+b.dataset.id+'/delete',{method:'POST'}).then(function(){toast('Máquina quitada');loadAll()});
+});
+['oCli','oEst'].forEach(function(i){$(i).onchange=renderOrders});
+$('oBusca').oninput=renderOrders;
+loadAll();setInterval(loadAll,30000);
 </script></body></html>`);
 });
 
