@@ -570,9 +570,25 @@ app.get('/admin/api/stats', adminAuth, async (_req, res) => {
   } catch (e) { console.error('[stats]', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// Diagnóstico: ¿a qué cuenta de MercadoPago pertenece el token guardado de un cliente?
+app.get('/admin/api/whoami', adminAuth, async (req, res) => {
+  try {
+    const client = await getClient(req.query.u);
+    if (!client) return res.status(404).json({ error: 'cliente no encontrado' });
+    if (!client.mp_token) return res.json({ cliente: client.jetinno_username, mp: 'sin token (simulación)' });
+    const me = await mpFetch(client, '/users/me');
+    res.json({
+      cliente: client.jetinno_username,
+      tokenPerteneceA: { id: me.id, nombre: `${me.first_name || ''} ${me.last_name || ''}`.trim(), nickname: me.nickname, tipo: me.site_status || '' },
+      mpUserIdCargado: client.mp_user_id,
+      coincide: String(me.id) === String(client.mp_user_id),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/api/orders', adminAuth, async (_req, res) => {
   if (dbReady) {
-    const r = await pool.query('SELECT order_no, client_username, device_no, amount_cents, product, status, mp_payment_id, created_at FROM orders ORDER BY created_at DESC LIMIT 100');
+    const r = await pool.query('SELECT order_no, client_username, mp_username, device_no, amount_cents, product, status, mp_payment_id, created_at FROM orders ORDER BY created_at DESC LIMIT 100');
     return res.json(r.rows);
   }
   const out = [];
