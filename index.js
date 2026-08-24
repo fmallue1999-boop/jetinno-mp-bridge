@@ -88,6 +88,7 @@ async function initDb() {
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now()
     )`);
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS mp_username TEXT DEFAULT ''`).catch(() => {});
     dbReady = true;
     console.log('[DB] Postgres conectado y tablas listas.');
     await seedFromEnv();
@@ -146,6 +147,29 @@ async function getClient(username) {
   }
   clientCache.set(username, { client, ts: Date.now() });
   return client;
+}
+
+// Ruteo por máquina: si la máquina está asignada a un cliente en la tabla
+// "machines", el dinero va al MercadoPago de ESE cliente (aunque la petición
+// llegue autenticada como la cuenta nivel 1, ej. AR1362).
+const machineOwnerCache = new Map(); // deviceNo -> {username|null, ts}
+async function resolveMpOwner(authClient, deviceNo) {
+  const dev = String(deviceNo || '');
+  if (!dev || !dbReady) return authClient;
+  const hit = machineOwnerCache.get(dev);
+  let ownerUsername;
+  if (hit && Date.now() - hit.ts < 60000) {
+    ownerUsername = hit.username;
+  } else {
+    const r = await pool.query(
+      'SELECT c.jetinno_username u FROM machines m JOIN clients c ON c.id=m.client_id WHERE m.device_no=$1 AND c.active=TRUE', [dev]
+    ).catch(() => ({ rows: [] }));
+    ownerUsername = r.rows.length ? r.rows[0].u : null;
+    machineOwnerCache.set(dev, { username: ownerUsername, ts: Date.now() });
+  }
+  if (!ownerUsername || ownerUsername === authClient.jetinno_username) return authClient;
+  const owner = await getClient(ownerUsername);
+  return owner && owner.mp_token ? owner : authClient;
 }
 
 // ================= Firma MD5 (manual Jetinno A5) =================
@@ -243,10 +267,10 @@ async function saveOrder(o) {
   memOrders.set(o.orderNo, o);
   if (dbReady) {
     await pool.query(
-      `INSERT INTO orders(order_no, client_username, device_no, amount_cents, product, status, notify_url)
-       VALUES($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (order_no) DO UPDATE SET status=$6, updated_at=now()`,
-      [o.orderNo, o.username, o.deviceNo, o.amountCents, o.product || '', o.status, o.notifyUrl || '']
+      `INSERT INTO orders(order_no, client_username, mp_username, device_no, amount_cents, product, status, notify_url)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (order_no) DO UPDATE SET status=$7, updated_at=now()`,
+      [o.orderNo, o.username, o.mpUsername || o.username, o.deviceNo, o.amountCents, o.product || '', o.status, o.notifyUrl || '']
     ).catch((e) => console.error('[DB] saveOrder', e.message));
   }
 }
@@ -267,7 +291,7 @@ async function getOrder(orderNo) {
     const r = await pool.query('SELECT * FROM orders WHERE order_no=$1', [orderNo]);
     if (r.rows.length) {
       const row = r.rows[0];
-      const o = { orderNo: row.order_no, username: row.client_username, deviceNo: row.device_no, amountCents: row.amount_cents, notifyUrl: row.notify_url, mpPaymentId: row.mp_payment_id, status: row.status, product: row.product };
+      const o = { orderNo: row.order_no, username: row.client_username, mpUsername: row.mp_username || row.client_username, deviceNo: row.device_no, amountCents: row.amount_cents, notifyUrl: row.notify_url, mpPaymentId: row.mp_payment_id, status: row.status, product: row.product };
       memOrders.set(orderNo, o);
       return o;
     }
@@ -303,8 +327,10 @@ app.post('/getQrCode', async (req, res) => {
     const client = await authClient(req, res, { optionalFields: ['payType', 'merchantNo', 'attach'] });
     if (!client) return;
     const amountCents = parseInt(d.orderAmount, 10);
-    const { qrData } = await createQrOrder(client, { orderNo: d.orderNo, amount: amountCents / 100, title: d.productName, deviceNo: d.deviceNo });
-    await saveOrder({ orderNo: d.orderNo, username: client.jetinno_username, deviceNo: d.deviceNo, amountCents, notifyUrl: d.notifyUrl, product: d.productName || '', status: 'PENDING', mpPaymentId: null });
+    const mpOwner = await resolveMpOwner(client, d.deviceNo); // dueño del dinero (por máquina)
+    if (mpOwner.jetinno_username !== client.jetinno_username) console.log(`[getQrCode] máquina ${d.deviceNo} -> MP de ${mpOwner.jetinno_username}`);
+    const { qrData } = await createQrOrder(mpOwner, { orderNo: d.orderNo, amount: amountCents / 100, title: d.productName, deviceNo: d.deviceNo });
+    await saveOrder({ orderNo: d.orderNo, username: client.jetinno_username, mpUsername: mpOwner.jetinno_username, deviceNo: d.deviceNo, amountCents, notifyUrl: d.notifyUrl, product: d.productName || '', status: 'PENDING', mpPaymentId: null });
     console.log(`[getQrCode] OK qr len=${qrData.length}`);
     ok(res, client, { deviceNo: d.deviceNo, orderNo: d.orderNo, qrCode: qrData });
   } catch (e) { console.error('[getQrCode] ERROR', e.message); fail(res, 'SYSTEM_ERROR'); }
@@ -326,8 +352,9 @@ app.post('/refund', async (req, res) => {
     if (!client) return;
     const d = req.body.data || {};
     const o = await getOrder(d.orderNo);
-    if (o && o.mpPaymentId && client.mp_token) {
-      await mpFetch(client, `/v1/payments/${o.mpPaymentId}/refunds`, { method: 'POST', body: { amount: parseInt(d.refundAmount, 10) / 100 } });
+    const mpc = o ? (await getClient(o.mpUsername || o.username)) || client : client; // el reembolso sale del MP dueño de la orden
+    if (o && o.mpPaymentId && mpc.mp_token) {
+      await mpFetch(mpc, `/v1/payments/${o.mpPaymentId}/refunds`, { method: 'POST', body: { amount: parseInt(d.refundAmount, 10) / 100 } });
       await updateOrder(d.orderNo, { status: 'REFUNDED' });
     }
     ok(res, client, { deviceNo: d.deviceNo, orderNo: d.orderNo, refundState: 'SUCCESS' });
@@ -346,11 +373,12 @@ app.post('/productdone', async (req, res) => {
     const d = req.body.data || {};
     if (d.isFinish === 'ERROR') {
       const o = await getOrder(d.orderNo);
-      if (o && o.mpPaymentId && client.mp_token) {
-        mpFetch(client, `/v1/payments/${o.mpPaymentId}/refunds`, { method: 'POST', body: {} })
+      const mpc = o ? (await getClient(o.mpUsername || o.username)) || client : client;
+      if (o && o.mpPaymentId && mpc.mp_token) {
+        mpFetch(mpc, `/v1/payments/${o.mpPaymentId}/refunds`, { method: 'POST', body: {} })
           .then(() => updateOrder(d.orderNo, { status: 'REFUNDED' }))
           .catch((e) => console.error('refund auto', e.message));
-        console.log(`[productdone] entrega fallida ${d.orderNo} -> reembolso`);
+        console.log(`[productdone] entrega fallida ${d.orderNo} -> reembolso (MP de ${mpc.jetinno_username})`);
       }
     } else {
       await updateOrder(d.orderNo, { status: 'DELIVERED' });
@@ -388,7 +416,9 @@ app.post('/mp/webhook', async (req, res) => {
     const o = await getOrder(orderNo);
     if (!o || o.status === 'PAID' || o.status === 'DELIVERED') return; // idempotencia
     await updateOrder(orderNo, { status: 'PAID', mpPaymentId: payId ? String(payId) : undefined });
-    await notifyJetinno(client, o, orderNo, 'PAYSUCCESS', payId);
+    // El aviso a Jetinno se firma con la cuenta que autenticó la orden (nivel 1, ej. AR1362)
+    const jet = await getClient(o.username) || client;
+    await notifyJetinno(jet, o, orderNo, 'PAYSUCCESS', payId);
   } catch (e) { console.error('[mp/webhook]', e.message); }
 });
 
@@ -452,20 +482,22 @@ app.get('/admin/api/clients', adminAuth, async (_req, res) => {
 
 app.post('/admin/api/clients', adminAuth, async (req, res) => {
   const { name, username, apikey, mpUserId, mpToken } = req.body || {};
-  if (!name || !username || !apikey) return res.status(400).json({ error: 'Faltan: nombre, username y apikey de Jetinno' });
+  if (!name || !username) return res.status(400).json({ error: 'Faltan: nombre y username' });
   try {
     if (dbReady) {
       await pool.query(
         `INSERT INTO clients(name, jetinno_username, jetinno_apikey_enc, mp_user_id, mp_token_enc, active)
          VALUES($1,$2,$3,$4,$5,TRUE)
-         ON CONFLICT (jetinno_username) DO UPDATE SET name=$1, jetinno_apikey_enc=$3,
+         ON CONFLICT (jetinno_username) DO UPDATE SET name=$1,
+           jetinno_apikey_enc=CASE WHEN $3<>'' THEN $3 ELSE clients.jetinno_apikey_enc END,
            mp_user_id=CASE WHEN $4<>'' THEN $4 ELSE clients.mp_user_id END,
            mp_token_enc=CASE WHEN $5<>'' THEN $5 ELSE clients.mp_token_enc END, active=TRUE`,
-        [name, username, encrypt(apikey), mpUserId || '', mpToken ? encrypt(mpToken) : '']
+        [name, username, apikey ? encrypt(apikey) : '', mpUserId || '', mpToken ? encrypt(mpToken) : '']
       );
     } else {
-      memClients.set(username, { id: memClients.size, name, jetinno_username: username, jetinno_apikey: apikey, mp_user_id: mpUserId || '', mp_token: mpToken || '', active: true });
+      memClients.set(username, { id: memClients.size, name, jetinno_username: username, jetinno_apikey: apikey || '', mp_user_id: mpUserId || '', mp_token: mpToken || '', active: true });
     }
+    clientCache.delete(username); machineOwnerCache.clear();
     clientCache.delete(username);
     res.json({ ok: true, warning: dbReady ? null : 'SIN BASE DE DATOS: este cliente se pierde al reiniciar el servidor.' });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -494,6 +526,7 @@ app.post('/admin/api/machines', adminAuth, async (req, res) => {
     'INSERT INTO machines(device_no, client_id, label) VALUES($1,$2,$3) ON CONFLICT (device_no) DO UPDATE SET client_id=$2, label=$3',
     [String(deviceNo), c.rows[0].id, label || '']
   );
+  machineOwnerCache.delete(String(deviceNo));
   res.json({ ok: true });
 });
 app.post('/admin/api/machines/:id/delete', adminAuth, async (req, res) => {
@@ -524,7 +557,7 @@ app.get('/admin/api/stats', adminAuth, async (_req, res) => {
     const [total] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid}`);
     const [reem] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE status='REFUNDED'`);
     const porMaquina = await q(`SELECT device_no, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} GROUP BY device_no ORDER BY c DESC`);
-    const porCliente = await q(`SELECT client_username, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} GROUP BY client_username ORDER BY c DESC`);
+    const porCliente = await q(`SELECT COALESCE(NULLIF(mp_username,''), client_username) AS client_username, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} GROUP BY 1 ORDER BY c DESC`);
     const porDia = await q(`SELECT ${localDate} d, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND created_at >= now() - interval '14 days' GROUP BY 1 ORDER BY 1`);
     res.json({
       hoy: { n: +hoy.n, cents: +hoy.c }, semana: { n: +semana.n, cents: +semana.c },
@@ -614,7 +647,7 @@ button.sec{background:transparent;border:1px solid var(--bd);color:var(--mut)}
 <section>
 <h2>Clientes</h2>
 <table id="tblClients"><thead><tr><th>Nombre</th><th>Username Jetinno</th><th>MP User ID</th><th>MercadoPago</th><th>Estado</th><th></th></tr></thead><tbody></tbody></table>
-<div class="note">Un cliente = una cuenta IOT de Jetinno (username + apikey) + su cuenta de MercadoPago. Sin token de MP, sus QR salen en modo simulación.</div>
+<div class="note">Un cliente = un nombre identificador + su cuenta de MercadoPago. La apikey de Jetinno solo hace falta para cuentas nivel 1 (como AR1362); los clientes ruteados por máquina no la necesitan. Sin token de MP, sus QR salen en modo simulación.</div>
 </section>
 
 <section>
@@ -622,7 +655,7 @@ button.sec{background:transparent;border:1px solid var(--bd);color:var(--mut)}
 <div class="grid2">
   <div><label>Nombre del cliente</label><input id="fName" placeholder="Ej: Café López SRL"></div>
   <div><label>Username Jetinno (cuenta IOT)</label><input id="fUser" placeholder="Ej: AR9999"></div>
-  <div><label>Apikey Jetinno</label><input id="fKey" placeholder="16 caracteres"></div>
+  <div><label>Apikey Jetinno (opcional — solo cuentas nivel 1)</label><input id="fKey" placeholder="Dejar vacío para clientes por máquina"></div>
   <div><label>MP User ID (número al final del token)</label><input id="fMpId" placeholder="Ej: 2980081299"></div>
   <div style="grid-column:1/-1"><label>Access Token de MercadoPago del cliente</label><input id="fMpTok" placeholder="APP_USR-..." type="password"></div>
 </div>
@@ -633,7 +666,8 @@ button.sec{background:transparent;border:1px solid var(--bd);color:var(--mut)}
 </section>
 
 <section>
-<h2>Máquinas (registro opcional, para orden y reportes)</h2>
+<h2>Máquinas — ⚠️ acá se decide a qué MercadoPago va la plata de cada equipo</h2>
+<div class="note">Al asignar una máquina a un cliente, sus cobros van al MercadoPago de ESE cliente. Las máquinas sin asignar cobran en el MercadoPago de la cuenta principal.</div>
 <table id="tblMachines"><thead><tr><th>N° máquina</th><th>Cliente</th><th>Etiqueta</th><th></th></tr></thead><tbody></tbody></table>
 <div class="grid2" style="margin-top:12px">
   <div><label>N° de máquina (vmc_no)</label><input id="mDev" placeholder="Ej: 173840"></div>
