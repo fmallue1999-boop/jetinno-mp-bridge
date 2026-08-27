@@ -89,6 +89,7 @@ async function initDb() {
       updated_at TIMESTAMPTZ DEFAULT now()
     )`);
     await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS mp_username TEXT DEFAULT ''`).catch(() => {});
+    await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_key TEXT DEFAULT ''`).catch(() => {});
     dbReady = true;
     console.log('[DB] Postgres conectado y tablas listas.');
     await seedFromEnv();
@@ -147,6 +148,24 @@ async function getClient(username) {
   }
   clientCache.set(username, { client, ts: Date.now() });
   return client;
+}
+
+// ============ Portal de clientes (acceso por link secreto) ============
+async function ensurePortalKey(username) {
+  if (!dbReady) return '';
+  const r = await pool.query('SELECT portal_key FROM clients WHERE jetinno_username=$1', [username]);
+  if (!r.rows.length) return '';
+  let key = r.rows[0].portal_key;
+  if (!key) {
+    key = crypto.randomBytes(9).toString('hex'); // 18 chars
+    await pool.query('UPDATE clients SET portal_key=$2 WHERE jetinno_username=$1', [username, key]);
+  }
+  return key;
+}
+async function getClientByPortalKey(key) {
+  if (!dbReady || !key || String(key).length < 10) return null;
+  const r = await pool.query('SELECT name, jetinno_username FROM clients WHERE portal_key=$1 AND active=TRUE', [String(key)]);
+  return r.rows.length ? r.rows[0] : null;
 }
 
 // Ruteo por máquina: si la máquina está asignada a un cliente en la tabla
@@ -446,6 +465,111 @@ app.get('/testqr', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message, body: e.body }); }
 });
 
+// ================= PORTAL DE CLIENTES =================
+app.get('/portal/api/summary', async (req, res) => {
+  try {
+    const cli = await getClientByPortalKey(req.query.k);
+    if (!cli) return res.status(404).json({ error: 'link inválido' });
+    const u = cli.jetinno_username;
+    const owner = `COALESCE(NULLIF(mp_username,''), client_username)`;
+    const paid = `status IN ('PAID','DELIVERED')`;
+    const localDate = `(created_at AT TIME ZONE '${TZ}')::date`;
+    const todayLocal = `(now() AT TIME ZONE '${TZ}')::date`;
+    const q = async (sql, params) => (await pool.query(sql, params)).rows;
+    const [hoy] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${owner}=$1 AND ${localDate}=${todayLocal}`, [u]);
+    const [semana] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${owner}=$1 AND created_at >= now() - interval '7 days'`, [u]);
+    const [mes] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${owner}=$1 AND date_trunc('month', created_at AT TIME ZONE '${TZ}') = date_trunc('month', now() AT TIME ZONE '${TZ}')`, [u]);
+    const [total] = await q(`SELECT COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${owner}=$1`, [u]);
+    const porDia = await q(`SELECT ${localDate} d, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${owner}=$1 AND created_at >= now() - interval '14 days' GROUP BY 1 ORDER BY 1`, [u]);
+    const porMaquina = await q(`SELECT device_no, COUNT(*) n, COALESCE(SUM(amount_cents),0) c FROM orders WHERE ${paid} AND ${owner}=$1 GROUP BY device_no ORDER BY c DESC`, [u]);
+    const maquinas = await q(`SELECT m.device_no, m.label FROM machines m JOIN clients c ON c.id=m.client_id WHERE c.jetinno_username=$1 ORDER BY m.device_no`, [u]);
+    const orders = await q(`SELECT order_no, device_no, amount_cents, product, status, created_at FROM orders WHERE ${owner}=$1 ORDER BY created_at DESC LIMIT 50`, [u]);
+    res.json({
+      name: cli.name,
+      hoy: { n: +hoy.n, cents: +hoy.c }, semana: { n: +semana.n, cents: +semana.c },
+      mes: { n: +mes.n, cents: +mes.c }, total: { n: +total.n, cents: +total.c },
+      porDia: porDia.map((r) => ({ dia: r.d, cents: +r.c })),
+      porMaquina: porMaquina.map((r) => ({ device: r.device_no, n: +r.n, cents: +r.c })),
+      maquinas, orders,
+    });
+  } catch (e) { console.error('[portal]', e.message); res.status(500).json({ error: 'error' }); }
+});
+
+app.get('/portal', async (req, res) => {
+  const cli = await getClientByPortalKey(req.query.k).catch(() => null);
+  if (!cli) return res.status(404).type('html').send('<body style="font-family:sans-serif;background:#0b0d12;color:#e9ecf2;display:grid;place-items:center;height:100vh;margin:0"><div style="text-align:center"><h2>Link inválido o vencido</h2><p style="color:#8b93a3">Pedile un link nuevo a tu proveedor.</p></div></body>');
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel de ventas</title>
+<style>
+:root{--bg:#0b0d12;--card:#151922;--tx:#e9ecf2;--mut:#8b93a3;--acc:#4f8cff;--ok:#2ecc71;--warn:#f5a623;--err:#ff5c5c;--bd:#252c3b}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+header{padding:22px;text-align:center;border-bottom:1px solid var(--bd)}
+header .t{font-size:19px;font-weight:800}header .s{color:var(--mut);font-size:12.5px;margin-top:4px}
+main{max-width:920px;margin:0 auto;padding:22px 18px 60px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px}
+.kpi .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+.kpi .v{font-size:22px;font-weight:800;margin-top:3px}
+.kpi .s{font-size:12px;color:var(--mut);margin-top:3px}
+h2{font-size:14px;margin:0 0 12px}
+.sect{margin-top:18px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--mut);text-align:left;font-weight:600;padding:7px 9px;border-bottom:1px solid var(--bd);font-size:11px;text-transform:uppercase}
+td{padding:9px;border-bottom:1px solid var(--bd)}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600}
+.b-ok{background:rgba(46,204,113,.13);color:var(--ok)}.b-info{background:rgba(79,140,255,.13);color:#8ab4ff}
+.b-warn{background:rgba(245,166,35,.13);color:var(--warn)}.b-err{background:rgba(255,92,92,.13);color:var(--err)}
+#chart{display:flex;align-items:flex-end;gap:4px;height:90px;margin-top:6px}
+#chart .bar{flex:1;border-radius:3px 3px 0 0;background:var(--acc);min-height:3px}
+#chart .bar.z{background:var(--bd)}
+.note{font-size:12px;color:var(--mut);text-align:center;margin-top:24px}
+</style></head><body>
+<header><div class="t" id="cName">Panel de ventas</div><div class="s">Ventas con QR de MercadoPago · se actualiza solo</div></header>
+<main>
+<div class="grid">
+  <div class="card kpi"><div class="l">Hoy</div><div class="v" id="kHoy">–</div><div class="s" id="kHoyN"></div></div>
+  <div class="card kpi"><div class="l">7 días</div><div class="v" id="kSem">–</div><div class="s" id="kSemN"></div></div>
+  <div class="card kpi"><div class="l">Este mes</div><div class="v" id="kMes">–</div><div class="s" id="kMesN"></div></div>
+  <div class="card kpi"><div class="l">Histórico</div><div class="v" id="kTot">–</div><div class="s" id="kTotN"></div></div>
+</div>
+<div class="card sect"><h2>Ventas por día — últimos 14 días</h2><div id="chart"></div></div>
+<div class="card sect"><h2>Tus máquinas</h2><table><thead><tr><th>Máquina</th><th>Ubicación</th><th>Ventas</th><th>Monto</th></tr></thead><tbody id="tbM"></tbody></table></div>
+<div class="card sect"><h2>Últimas ventas</h2><table><thead><tr><th>Fecha</th><th>Máquina</th><th>Producto</th><th>Monto</th><th>Estado</th></tr></thead><tbody id="tbO"></tbody></table></div>
+<div class="note">Los montos son brutos (no descuentan comisiones de MercadoPago).<br>Panel provisto por tu proveedor de máquinas.</div>
+</main>
+<script>
+var K=new URLSearchParams(location.search).get('k');
+var $=function(i){return document.getElementById(i)};
+var money=function(c){return '$'+((c||0)/100).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2})};
+var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]})};
+function load(){
+  fetch('/portal/api/summary?k='+encodeURIComponent(K)).then(function(r){return r.json()}).then(function(d){
+    if(d.error)return;
+    $('cName').textContent=d.name;
+    document.title=d.name+' — Ventas';
+    $('kHoy').textContent=money(d.hoy.cents);$('kHoyN').textContent=d.hoy.n+' ventas';
+    $('kSem').textContent=money(d.semana.cents);$('kSemN').textContent=d.semana.n+' ventas';
+    $('kMes').textContent=money(d.mes.cents);$('kMesN').textContent=d.mes.n+' ventas';
+    $('kTot').textContent=money(d.total.cents);$('kTotN').textContent=d.total.n+' ventas';
+    var days=[],i;for(i=13;i>=0;i--){days.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10))}
+    var map={};(d.porDia||[]).forEach(function(r){map[String(r.dia).slice(0,10)]=r.cents});
+    var max=Math.max.apply(null,[1].concat(days.map(function(x){return map[x]||0})));
+    $('chart').innerHTML=days.map(function(x){var v=map[x]||0;var h=Math.max(3,Math.round(v/max*82));
+      return '<div class="bar'+(v?'':' z')+'" style="height:'+h+'px" title="'+x+': '+money(v)+'"></div>'}).join('');
+    var labels={};(d.maquinas||[]).forEach(function(m){labels[m.device_no]=m.label});
+    $('tbM').innerHTML=(d.porMaquina||[]).map(function(m){
+      return '<tr><td><b>'+esc(m.device)+'</b></td><td>'+esc(labels[m.device]||'—')+'</td><td>'+m.n+'</td><td>'+money(m.cents)+'</td></tr>'}).join('')||'<tr><td colspan=4 style="color:var(--mut)">Sin ventas aún</td></tr>';
+    $('tbO').innerHTML=(d.orders||[]).map(function(o){
+      var b={PAID:'b-ok',DELIVERED:'b-ok',PENDING:'b-info',PAYING:'b-info',REFUNDED:'b-warn'}[o.status]||'b-err';
+      var dt=o.created_at?new Date(o.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+      return '<tr><td>'+dt+'</td><td>'+esc(o.device_no||'')+'</td><td>'+esc(o.product||'')+'</td><td><b>'+money(o.amount_cents)+'</b></td><td><span class="badge '+b+'">'+esc(o.status)+'</span></td></tr>'}).join('')||'<tr><td colspan=5 style="color:var(--mut)">Sin ventas aún</td></tr>';
+  });
+}
+load();setInterval(load,60000);
+</script></body></html>`);
+});
+
 // ================= PANEL DE ADMINISTRACIÓN =================
 function adminAuth(req, res, next) {
   if (!ADMIN_PASSWORD) return res.status(503).send('Configura ADMIN_PASSWORD en las variables de entorno para usar el panel.');
@@ -472,8 +596,11 @@ app.get('/admin/api/status', adminAuth, async (_req, res) => {
 app.get('/admin/api/clients', adminAuth, async (_req, res) => {
   const out = [];
   if (dbReady) {
-    const r = await pool.query('SELECT id,name,jetinno_username,mp_user_id,active,created_at, (mp_token_enc<>\'\') AS has_mp, (jetinno_apikey_enc<>\'\') AS has_key FROM clients ORDER BY id');
-    for (const c of r.rows) out.push({ id: c.id, name: c.name, username: c.jetinno_username, mpUserId: c.mp_user_id, hasMp: c.has_mp, hasKey: c.has_key, active: c.active });
+    const r = await pool.query('SELECT id,name,jetinno_username,mp_user_id,active,portal_key, (mp_token_enc<>\'\') AS has_mp, (jetinno_apikey_enc<>\'\') AS has_key FROM clients ORDER BY id');
+    for (const c of r.rows) {
+      const pk = c.portal_key || await ensurePortalKey(c.jetinno_username);
+      out.push({ id: c.id, name: c.name, username: c.jetinno_username, mpUserId: c.mp_user_id, hasMp: c.has_mp, hasKey: c.has_key, active: c.active, portalKey: pk });
+    }
   } else {
     for (const c of memClients.values()) out.push({ id: c.id, name: c.name, username: c.jetinno_username, mpUserId: c.mp_user_id, hasMp: !!c.mp_token, hasKey: !!c.jetinno_apikey, active: c.active });
   }
@@ -806,7 +933,8 @@ function renderClients(){
     return '<tr><td><b>'+esc(c.name)+'</b></td><td>'+esc(c.username)+'</td><td>'+esc(c.mpUserId||'—')+'</td>'+
     '<td>'+(c.hasMp?badge('conectado','b-ok'):badge('simulación','b-warn'))+'</td>'+
     '<td>'+(c.active?badge('activo','b-ok'):badge('pausado','b-err'))+'</td>'+
-    '<td style="text-align:right"><button class="sec" data-act="edit" data-u="'+esc(c.username)+'">Editar</button> '+
+    '<td style="text-align:right">'+(c.portalKey?'<button class="sec" data-act="portal" data-k="'+esc(c.portalKey)+'">Portal 🔗</button> ':'')+
+    '<button class="sec" data-act="edit" data-u="'+esc(c.username)+'">Editar</button> '+
     '<button class="'+(c.active?'dng':'sec')+'" data-act="toggle" data-u="'+esc(c.username)+'">'+(c.active?'Pausar':'Activar')+'</button></td></tr>'}).join('')||'<tr><td colspan=6 class="note">Sin clientes</td></tr>';
   $('urlsBox').innerHTML='qRUrl: '+location.origin+'/getQrCode<br>scanUrl: '+location.origin+'/payBarCode<br>refundUrl: '+location.origin+'/refund';
 }
@@ -873,6 +1001,10 @@ $('btnSaveMaq').onclick=function(){
 };
 $('tbCli').addEventListener('click',function(e){
   var b=e.target.closest('button');if(!b)return;
+  if(b.dataset.act==='portal'){var url=location.origin+'/portal?k='+b.dataset.k;
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(function(){toast('Link del portal copiado — enviáselo al cliente')})}
+    else{prompt('Link del portal del cliente:',url)}
+    return}
   if(b.dataset.act==='toggle'){api('clients/'+encodeURIComponent(b.dataset.u)+'/toggle',{method:'POST'}).then(function(){toast('Estado actualizado');loadAll()})}
   if(b.dataset.act==='edit'){var c=D.clients.find(function(x){return x.username===b.dataset.u});if(!c)return;
     $('cliFormTitle').textContent='Editar: '+c.name;$('fName').value=c.name;$('fUser').value=c.username;$('fMpId').value=c.mpUserId||'';
